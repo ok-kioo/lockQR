@@ -1,0 +1,38 @@
+[debug] [2026-05-28T20:40:09.751Z] ----------------------------------------------------------------------
+[debug] [2026-05-28T20:40:09.756Z] Command:       /home/kio/.local/bin/firebase /home/kio/.cache/firebase/tools/lib/node_modules/firebase-tools/lib/bin/firebase init dataconnect
+[debug] [2026-05-28T20:40:09.757Z] CLI Version:   15.19.0
+[debug] [2026-05-28T20:40:09.757Z] Platform:      linux
+[debug] [2026-05-28T20:40:09.758Z] Node Version:  v20.18.2
+[debug] [2026-05-28T20:40:09.758Z] Time:          Thu May 28 2026 17:40:09 GMT-0300 (GMT-03:00)
+[debug] [2026-05-28T20:40:09.758Z] ----------------------------------------------------------------------
+[debug] 
+[info] 
+     ######## #### ########  ######## ########     ###     ######  ########
+     ##        ##  ##     ## ##       ##     ##  ##   ##  ##       ##
+     ######    ##  ########  ######   ########  #########  ######  ######
+     ##        ##  ##    ##  ##       ##     ## ##     ##       ## ##
+     ##       #### ##     ## ######## ########  ##     ##  ######  ########
+
+You're about to initialize a Firebase project in this directory:
+
+  /home/kio/Downloads/Computação/C/ESP32/PlatformIO/Projects/lockqr
+
+[info] 
+=== Project Setup
+[info] 
+[info] First, let's associate this project directory with a Firebase project.
+[info] You can create multiple project aliases by running firebase use --add, 
+[info] 
+[debug] [2026-05-28T20:40:36.029Z] ExitPromptError: User force closed the prompt with SIGINT
+    at Interface.sigint (/home/kio/.cache/firebase/tools/lib/node_modules/@inquirer/core/dist/commonjs/lib/create-prompt.js:101:37)
+    at Interface.emit (node:events:518:28)
+    at [_ttyWrite] [as _ttyWrite] (node:internal/readline/interface:1125:18)
+    at ReadStream.onkeypress (node:internal/readline/interface:264:20)
+    at ReadStream.emit (node:events:530:35)
+    at emitKeys (node:internal/readline/utils:371:14)
+    at emitKeys.next (<anonymous>)
+    at ReadStream.onData (node:internal/readline/emitKeypressEvents:64:36)
+    at ReadStream.emit (node:events:518:28)
+    at addChunk (node:internal/streams/readable:561:12)
+[error] 
+[error] Error: An unexpected error has occurred.
