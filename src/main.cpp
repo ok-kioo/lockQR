@@ -1,8 +1,8 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <ArduinoJson.h>
 #include "../secrets.h"
-#include "site/web_content.h"
 #include <Firebase_ESP_Client.h>
 
 #define LOCK_PIN 2
@@ -19,14 +19,11 @@ void conectarWiFi();
 void configurarFirebase();
 void configurarServidorWeb();
 
-void rotaPrincipal();
-void rotaCss();
-void rotaJs();
 void rotaLogin();
+bool validarAcesso(String porta);
 
-String limparUsuario(String usuario);
-bool validarUsuarioNoFirebase(String usuario, String senhaDigitada);
-void abrirFechadura();
+void abrirFechadura(String caminho);
+void fecharFechadura(String caminho);
 
 void setup() {
   Serial.begin(115200);
@@ -65,8 +62,8 @@ void conectarWiFi() {
 }
 
 void configurarFirebase() {
-  config.api_key = FIREBASE_API_KEY;
-  config.database_url = FIREBASE_DATABASE_URL;
+  config.host = FIREBASE_DATABASE_URL;
+  config.signer.tokens.legacy_token = FIREBASE_API_KEY;
 
   Firebase.begin(&config, &auth);
   Firebase.reconnectWiFi(true);
@@ -75,9 +72,6 @@ void configurarFirebase() {
 }
 
 void configurarServidorWeb() {
-  server.on("/", HTTP_GET, rotaPrincipal);
-  server.on("/style.css", HTTP_GET, rotaCss);
-  server.on("/script.js", HTTP_GET, rotaJs);
   server.on("/login", HTTP_POST, rotaLogin);
 
   server.begin();
@@ -87,85 +81,55 @@ void configurarServidorWeb() {
   Serial.println(WiFi.localIP());
 }
 
-void rotaPrincipal() {
-  server.send_P(200, "text/html", INDEX_HTML);
-}
-
-void rotaCss() {
-  server.send_P(200, "text/css", STYLE_CSS);
-}
-
-void rotaJs() {
-  server.send_P(200, "application/javascript", SCRIPT_JS);
-}
-
 void rotaLogin() {
-  String usuario = server.arg("usuario");
-  String senha = server.arg("senha");
 
-  usuario.trim();
-  senha.trim();
+  String body = server.arg("plain");
 
-  Serial.println("Tentativa de login");
-  Serial.print("Usuario recebido: ");
-  Serial.println(usuario);
+  JsonDocument doc;
+  DeserializationError erro = deserializeJson(doc, body);
 
-  bool acessoPermitido = validarUsuarioNoFirebase(usuario, senha);
+  if (erro) {
+    server.send(400, "text/plain", "JSON invalido");
+    return;
+  }
 
-  if (acessoPermitido) {
-    abrirFechadura();
+  String porta = doc["porta"].as<String>();
+
+  Serial.println(porta);
+
+  String caminho = "/doors/";
+  caminho += porta;
+  caminho += "/isOpen";
+
+  if (validarAcesso(caminho)) {
+    abrirFechadura(caminho);
+    delay(TEMPO_ABERTO_MS);
+    fecharFechadura(caminho);
     server.send(200, "text/plain", "Acesso liberado");
   } else {
-    server.send(401, "text/plain", "Usuario ou senha incorretos");
+    server.send(401, "text/plain", "Erro interno");
   }
 }
 
-String limparUsuario(String usuario) {
-  usuario.trim();
-  usuario.toLowerCase();
-
-  usuario.replace(".", "");
-  usuario.replace("#", "");
-  usuario.replace("$", "");
-  usuario.replace("[", "");
-  usuario.replace("]", "");
-  usuario.replace("/", "");
-
-  return usuario;
-}
-
-bool validarUsuarioNoFirebase(String usuario, String senhaDigitada) {
+bool validarAcesso(String caminho) {
   if (!Firebase.ready()) {
     Serial.println("Firebase ainda nao esta pronto");
     return false;
   }
 
-  usuario = limparUsuario(usuario);
-  senhaDigitada.trim();
-
-  if (usuario.length() == 0 || senhaDigitada.length() == 0) {
-    Serial.println("Usuario ou senha vazios");
-    return false;
-  }
-
-  String caminho = "/usuarios/";
-  caminho += usuario;
-  caminho += "/senha";
-
   Serial.print("Consultando Firebase em: ");
   Serial.println(caminho);
 
-  if (Firebase.RTDB.getString(&fbdo, caminho.c_str())) {
-    String senhaFirebase = fbdo.stringData();
-    senhaFirebase.trim();
+  if (Firebase.RTDB.getBool(&fbdo, caminho.c_str())) {
+    bool doorIsOpen = fbdo.boolData();
 
-    if (senhaFirebase == senhaDigitada) {
-      Serial.println("Senha correta");
-      return true;
+    if (doorIsOpen == true) {
+      server.send(401, "text/plain", "Porta já está aberta");
+      return false;
     }
 
-    Serial.println("Senha incorreta");
-    return false;
+    Serial.println("Porta fechada");
+    return true;
   }
 
   Serial.print("Erro ao consultar Firebase: ");
@@ -174,12 +138,25 @@ bool validarUsuarioNoFirebase(String usuario, String senhaDigitada) {
   return false;
 }
 
-void abrirFechadura() {
+void abrirFechadura(String caminho) {
+  if (Firebase.RTDB.setBool(&fbdo, caminho.c_str(), true)) {
+    Serial.println("Porta marcada como aberta no Firebase");
+  } else {
+    Serial.println(fbdo.errorReason());
+  }
   Serial.println("Abrindo fechadura");
 
   digitalWrite(LOCK_PIN, HIGH);
-  delay(TEMPO_ABERTO_MS);
+}
+
+void fecharFechadura(String caminho) {
+  if (Firebase.RTDB.setBool(&fbdo, caminho.c_str(), false)) {
+    Serial.println("Porta marcada como fechada no Firebase");
+  } else {
+    Serial.println(fbdo.errorReason());
+  }
+
   digitalWrite(LOCK_PIN, LOW);
 
-  Serial.println("Fechadura travada novamente");
+  Serial.println("Fechadura fechada novamente");
 }
