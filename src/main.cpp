@@ -4,8 +4,8 @@
 #include <ArduinoJson.h>
 #include "../secrets.h"
 #include <Firebase_ESP_Client.h>
-
-#define LOCK_PIN 2
+#include <map>
+#include <set>
 
 WebServer server(80);
 
@@ -13,150 +13,563 @@ FirebaseData fbdo;
 FirebaseAuth auth;
 FirebaseConfig config;
 
-const unsigned long TEMPO_ABERTO_MS = 3000;
+const unsigned long TEMPO_ABERTO_MS = 10000;
+
+struct LockState {
+  uint8_t pin;
+  bool aberta;
+  unsigned long instanteAbertura;
+};
+
+std::map<String, LockState> fechaduras;
+
+const uint8_t PINOS_DISPONIVEIS[] = {
+  2,
+  4,
+  5,
+  18,
+  19,
+  21,
+  22,
+  23,
+  25,
+  26,
+  27,
+  32,
+  33
+};
+
+const int TOTAL_PINOS =
+  sizeof(PINOS_DISPONIVEIS) /
+  sizeof(PINOS_DISPONIVEIS[0]);
+
+int proximoPino = 0;
 
 void conectarWiFi();
 void configurarFirebase();
 void configurarServidorWeb();
+void adicionarCors();
 
-void rotaLogin();
-bool validarAcesso(String porta);
+void carregarPortasFirebase();
 
-void abrirFechadura(String caminho);
-void fecharFechadura(String caminho);
+void rotaAbrir();
+void rotaNovaPorta();
+
+bool validarAcesso(const String& caminho);
+
+void abrirFechadura(
+  const String& portaId,
+  const String& caminho
+);
+
+void fecharFechadura(
+  const String& portaId,
+  const String& caminho
+);
+
+bool registrarPorta(
+  const String& portaId
+);
 
 void setup() {
+
   Serial.begin(115200);
 
-  pinMode(LOCK_PIN, OUTPUT);
-  digitalWrite(LOCK_PIN, LOW);
-
   conectarWiFi();
+
   configurarFirebase();
+
+  carregarPortasFirebase();
+
   configurarServidorWeb();
 }
 
 void loop() {
+
   server.handleClient();
 
-  if (WiFi.status() != WL_CONNECTED) {
+  unsigned long agora = millis();
+
+  for (auto& item : fechaduras) {
+
+    String portaId = item.first;
+    LockState& estado = item.second;
+
+    if (
+      estado.aberta &&
+      agora - estado.instanteAbertura >= TEMPO_ABERTO_MS
+    ) {
+
+        String caminho = "/doors/";
+        caminho += portaId;
+        caminho += "/isOpen";
+
+      fecharFechadura(
+        portaId,
+        caminho
+      );
+    }
+  }
+
+  if (
+    WiFi.status() != WL_CONNECTED
+  ) {
     conectarWiFi();
   }
 }
 
 void conectarWiFi() {
-  Serial.println("Conectando ao WiFi...");
+
+  Serial.println(
+    "Conectando ao WiFi..."
+  );
 
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-  while (WiFi.status() != WL_CONNECTED) {
+  WiFi.begin(
+    WIFI_SSID,
+    WIFI_PASSWORD
+  );
+
+  while (
+    WiFi.status() != WL_CONNECTED
+  ) {
+
     delay(500);
+
     Serial.print(".");
   }
 
   Serial.println();
-  Serial.println("WiFi conectado");
-  Serial.print("IP do ESP32: ");
-  Serial.println(WiFi.localIP());
+  Serial.println(
+    "WiFi conectado"
+  );
+
+  Serial.println(
+    WiFi.localIP()
+  );
 }
 
 void configurarFirebase() {
-  config.host = FIREBASE_DATABASE_URL;
-  config.signer.tokens.legacy_token = FIREBASE_API_KEY;
 
-  Firebase.begin(&config, &auth);
+  config.host =
+    FIREBASE_DATABASE_URL;
+
+  config.signer.tokens
+      .legacy_token =
+      FIREBASE_API_KEY;
+
+  Firebase.begin(
+    &config,
+    &auth
+  );
+
   Firebase.reconnectWiFi(true);
 
-  Serial.println("Firebase iniciado");
+  Serial.println(
+    "Firebase iniciado"
+  );
 }
 
-void configurarServidorWeb() {
-  server.on("/login", HTTP_POST, rotaLogin);
+void adicionarCors() {
 
-  server.begin();
+  server.sendHeader(
+    "Access-Control-Allow-Origin",
+    "*"
+  );
 
-  Serial.println("Servidor web iniciado");
-  Serial.print("Acesse pelo navegador ou QR Code: http://");
-  Serial.println(WiFi.localIP());
+  server.sendHeader(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, DELETE, OPTIONS"
+  );
+
+  server.sendHeader(
+    "Access-Control-Allow-Headers",
+    "*"
+  );
 }
 
-void rotaLogin() {
+bool registrarPorta(
+  const String& portaId
+) {
 
-  String body = server.arg("plain");
+  if (
+    fechaduras.find(portaId)
+    != fechaduras.end()
+  ) {
 
-  JsonDocument doc;
-  DeserializationError erro = deserializeJson(doc, body);
+    return true;
+  }
 
-  if (erro) {
-    server.send(400, "text/plain", "JSON invalido");
+  if (
+    proximoPino >= TOTAL_PINOS
+  ) {
+
+    Serial.println(
+      "Sem GPIOs livres"
+    );
+
+    return false;
+  }
+
+  uint8_t pino =
+    PINOS_DISPONIVEIS[
+      proximoPino++
+    ];
+
+  pinMode(
+    pino,
+    OUTPUT
+  );
+
+  digitalWrite(
+    pino,
+    LOW
+  );
+
+  fechaduras[portaId] = {
+    pino,
+    false,
+    0
+  };
+
+  Serial.print(
+    "Porta registrada: "
+  );
+
+  Serial.print(portaId);
+
+  Serial.print(
+    " -> GPIO "
+  );
+
+  Serial.println(pino);
+
+  return true;
+}
+
+void carregarPortasFirebase() {
+
+  Serial.println("Carregando portas do Firebase...");
+
+  if (!Firebase.RTDB.getJSON(
+          &fbdo,
+          "/doors")) {
+
+    Serial.print("Erro Firebase: ");
+    Serial.println(fbdo.errorReason());
+
     return;
   }
 
-  String porta = doc["porta"].as<String>();
+  String jsonString;
 
-  Serial.println(porta);
+  fbdo.jsonObject().toString(
+      jsonString,
+      true
+  );
+
+  JsonDocument doc;
+
+  DeserializationError erro =
+      deserializeJson(
+          doc,
+          jsonString
+      );
+
+  if (erro) {
+
+    Serial.print(
+        "Erro ao parsear JSON: "
+    );
+
+    Serial.println(
+        erro.c_str()
+    );
+
+    return;
+  }
+
+  JsonObject portas =
+      doc.as<JsonObject>();
+
+  int total = 0;
+
+  for (JsonPair kv : portas) {
+
+    String portaId =
+        kv.key().c_str();
+
+    if (
+        registrarPorta(
+            portaId
+        )) {
+
+      total++;
+    }
+  }
+
+  Serial.print(
+      "Total de portas carregadas: "
+  );
+
+  Serial.println(total);
+}
+
+void configurarServidorWeb() {
+
+  server.on("/open", HTTP_OPTIONS, []() {
+
+    adicionarCors();
+
+    Serial.println("OPTIONS /open");
+
+    server.send(204);
+  });
+
+  server.on("/new-lock", HTTP_OPTIONS, []() {
+
+    adicionarCors();
+
+    Serial.println("OPTIONS /new-lock");
+
+    server.send(204);
+  });
+
+  server.on(
+    "/open",
+    HTTP_POST,
+    rotaAbrir
+  );
+
+  server.on(
+    "/new-lock",
+    HTTP_POST,
+    rotaNovaPorta
+  );
+
+  server.onNotFound([]() {
+
+    adicionarCors();
+
+    Serial.print("Rota nao encontrada: ");
+    Serial.println(server.uri());
+
+    server.send(
+      404,
+      "text/plain",
+      "Rota nao encontrada"
+    );
+  });
+
+  server.begin();
+
+  Serial.println("Servidor iniciado");
+}
+
+void rotaNovaPorta() {
+
+  adicionarCors();
+
+  String body =
+    server.arg("plain");
+
+  JsonDocument doc;
+
+  if (
+    deserializeJson(
+      doc,
+      body
+    )
+  ) {
+
+    server.send(
+      400,
+      "text/plain",
+      "JSON invalido"
+    );
+
+    return;
+  }
+
+  String portaId =
+    doc["id"] | "";
+
+  if (
+    portaId.isEmpty()
+  ) {
+
+    server.send(
+      400,
+      "text/plain",
+      "ID invalido"
+    );
+
+    return;
+  }
+
+  if (
+    !registrarPorta(portaId)
+  ) {
+
+    server.send(
+      500,
+      "text/plain",
+      "Sem GPIO disponivel"
+    );
+
+    return;
+  }
+
+  server.send(
+    200,
+    "text/plain",
+    "Porta registrada"
+  );
+}
+
+void rotaAbrir() {
+
+  adicionarCors();
+
+  String body =
+    server.arg("plain");
+
+  JsonDocument doc;
+
+  if (
+    deserializeJson(
+      doc,
+      body
+    )
+  ) {
+
+    server.send(
+      400,
+      "text/plain",
+      "JSON invalido"
+    );
+
+    return;
+  }
+
+  String porta =
+    doc["porta"] | "";
+
+  if (
+    !fechaduras.count(porta)
+  ) {
+
+    server.send(
+      404,
+      "text/plain",
+      "Porta nao encontrada"
+    );
+
+    return;
+  }
 
   String caminho = "/doors/";
   caminho += porta;
   caminho += "/isOpen";
 
-  if (validarAcesso(caminho)) {
-    abrirFechadura(caminho);
-    delay(TEMPO_ABERTO_MS);
-    fecharFechadura(caminho);
-    server.send(200, "text/plain", "Acesso liberado");
-  } else {
-    server.send(401, "text/plain", "Erro interno");
+  if (
+    !validarAcesso(caminho)
+  ) {
+
+    server.send(
+      409,
+      "text/plain",
+      "Porta ja aberta"
+    );
+
+    return;
   }
+
+  abrirFechadura(
+    porta,
+    caminho
+  );
+
+  server.send(
+    200,
+    "text/plain",
+    "Acesso liberado"
+  );
 }
 
-bool validarAcesso(String caminho) {
-  if (!Firebase.ready()) {
-    Serial.println("Firebase ainda nao esta pronto");
+bool validarAcesso(
+  const String& caminho
+) {
+
+  if (
+    !Firebase.RTDB.getBool(
+      &fbdo,
+      caminho.c_str()
+    )
+  ) {
+
     return false;
   }
 
-  Serial.print("Consultando Firebase em: ");
-  Serial.println(caminho);
-
-  if (Firebase.RTDB.getBool(&fbdo, caminho.c_str())) {
-    bool doorIsOpen = fbdo.boolData();
-
-    if (doorIsOpen == true) {
-      server.send(401, "text/plain", "Porta já está aberta");
-      return false;
-    }
-
-    Serial.println("Porta fechada");
-    return true;
-  }
-
-  Serial.print("Erro ao consultar Firebase: ");
-  Serial.println(fbdo.errorReason());
-
-  return false;
+  return !fbdo.boolData();
 }
 
-void abrirFechadura(String caminho) {
-  if (Firebase.RTDB.setBool(&fbdo, caminho.c_str(), true)) {
-    Serial.println("Porta marcada como aberta no Firebase");
-  } else {
-    Serial.println(fbdo.errorReason());
-  }
-  Serial.println("Abrindo fechadura");
+void abrirFechadura(
+  const String& portaId,
+  const String& caminho
+) {
 
-  digitalWrite(LOCK_PIN, HIGH);
+  LockState& estado =
+    fechaduras[portaId];
+
+  digitalWrite(
+    estado.pin,
+    HIGH
+  );
+
+  estado.aberta = true;
+
+  estado.instanteAbertura =
+    millis();
+
+  Firebase.RTDB.setBool(
+    &fbdo,
+    caminho.c_str(),
+    true
+  );
+
+  Serial.print(
+    "Abrindo "
+  );
+
+  Serial.println(portaId);
 }
 
-void fecharFechadura(String caminho) {
-  if (Firebase.RTDB.setBool(&fbdo, caminho.c_str(), false)) {
-    Serial.println("Porta marcada como fechada no Firebase");
-  } else {
-    Serial.println(fbdo.errorReason());
-  }
+void fecharFechadura(
+  const String& portaId,
+  const String& caminho
+) {
 
-  digitalWrite(LOCK_PIN, LOW);
+  LockState& estado =
+    fechaduras[portaId];
 
-  Serial.println("Fechadura fechada novamente");
+  digitalWrite(
+    estado.pin,
+    LOW
+  );
+
+  estado.aberta = false;
+
+  Firebase.RTDB.setBool(
+    &fbdo,
+    caminho.c_str(),
+    false
+  );
+
+  Serial.print(
+    "Fechando "
+  );
+
+  Serial.println(portaId);
 }
