@@ -205,9 +205,10 @@ bool registrarPorta(
     proximoPino >= TOTAL_PINOS
   ) {
 
-    Serial.println(
-      "Sem GPIOs livres"
-    );
+    server.send(
+    400,
+    "text/plain",
+    "Sem GPIO disponivel para registrar nova porta");
 
     return false;
   }
