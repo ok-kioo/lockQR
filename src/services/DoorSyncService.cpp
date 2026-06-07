@@ -2,6 +2,7 @@
 
 #include <ArduinoJson.h>
 #include <Firebase_ESP_Client.h>
+#include <set>
 
 #include "../config/FirebaseManager.h"
 #include "../lock/LockManager.h"
@@ -121,11 +122,67 @@ void syncDoors() {
     );
 
   if (erro) {
+
+    Serial.print(
+      "Erro JSON: "
+    );
+
+    Serial.println(
+      erro.c_str()
+    );
+
     return;
   }
 
   JsonObject portas =
     doc.as<JsonObject>();
+
+  std::set<String> idsFirebase;
+
+  for (
+    JsonPair kv : portas
+  ) {
+
+    idsFirebase.insert(
+      kv.key().c_str()
+    );
+  }
+
+  std::vector<String> portasRemovidas;
+
+  for (
+    auto& item : locks
+  ) {
+
+    if (
+      !idsFirebase.count(
+        item.first
+      )
+    ) {
+
+      portasRemovidas.push_back(
+        item.first
+      );
+    }
+  }
+
+  for (
+    const String& portaId :
+    portasRemovidas
+  ) {
+
+    Serial.print(
+      "Removendo porta: "
+    );
+
+    Serial.println(
+      portaId
+    );
+
+    removeLock(
+      portaId
+    );
+  }
 
   for (
     JsonPair kv : portas
@@ -141,10 +198,6 @@ void syncDoors() {
       portaId
     );
 
-    bool abertaNoBanco =
-      porta["isOpen"] |
-      false;
-
     auto it =
       locks.find(
         portaId
@@ -154,8 +207,13 @@ void syncDoors() {
       it ==
       locks.end()
     ) {
+
       continue;
     }
+
+    bool abertaNoBanco =
+      porta["isOpen"] |
+      false;
 
     LockState& estado =
       it->second;
@@ -178,7 +236,7 @@ void syncDoors() {
       );
     }
 
-    if (
+    else if (
       !abertaNoBanco &&
       estado.abertaFisicamente
     ) {
@@ -211,5 +269,25 @@ void updateDoorState(
     &fbdo,
     path.c_str(),
     isOpen
+  );
+}
+
+void updatePhysicalState(
+  const String& id,
+  bool physicalOpen
+) {
+
+  String path =
+    "/doors/";
+
+  path += id;
+
+  path +=
+    "/physicalOpen";
+
+  Firebase.RTDB.setBool(
+    &fbdo,
+    path.c_str(),
+    physicalOpen
   );
 }

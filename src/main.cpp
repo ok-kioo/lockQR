@@ -27,6 +27,8 @@ void loop() {
 
   processLocks();
 
+  monitorSensors();
+
   if (
     millis() - lastSync >=
     SYNC_INTERVAL

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Arduino.h>
+
 const uint8_t PINOS_DISPONIVEIS[] = {
   18,
   19,

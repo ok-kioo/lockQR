@@ -1,37 +1,87 @@
 #include "LockManager.h"
-#include "Pins.h"
+#include "../services/DoorSyncService.h"
 
 std::map<String, LockState> locks;
 
-const int ANGULO_FECHADO = 0;
-const int ANGULO_ABERTO = 90;
+const int ANGULO_FECHADO = 90;
+const int ANGULO_ABERTO = 180;
 
 const unsigned long TEMPO_ABERTO_MS =
   10000;
 
-int nextPin = 0;
+const uint8_t SERVO_PINS[] = {
+  18,
+  19,
+  21,
+  22,
+  23
+};
+
+const uint8_t SENSOR_PINS[] = {
+  25,
+  26,
+  27,
+  32,
+  33
+};
+
+const int TOTAL_PORTAS = 5;
+
+std::vector<int> freeSlots;
+
+static void initializePins() {
+
+  if (!freeSlots.empty()) {
+    return;
+  }
+
+  for (
+    int i = 0;
+    i < TOTAL_PORTAS;
+    i++
+  ) {
+
+    freeSlots.push_back(i);
+  }
+}
 
 bool registerLock(
   const String& id
 ) {
 
+  initializePins();
+
   if (
     locks.find(id)
     != locks.end()
   ) {
+
     return true;
   }
 
   if (
-    nextPin >= TOTAL_PINOS
+    freeSlots.empty()
   ) {
+
+    Serial.println(
+      "Sem portas livres"
+    );
+
     return false;
   }
 
-  uint8_t pin =
-    PINOS_DISPONIVEIS[
-      nextPin++
-    ];
+  int slot =
+    freeSlots.front();
+
+  freeSlots.erase(
+    freeSlots.begin()
+  );
+
+  uint8_t servoPin =
+    SERVO_PINS[slot];
+
+  uint8_t sensorPin =
+    SENSOR_PINS[slot];
 
   Servo* servo =
     new Servo();
@@ -39,7 +89,7 @@ bool registerLock(
   servo->setPeriodHertz(50);
 
   servo->attach(
-    pin,
+    servoPin,
     500,
     2400
   );
@@ -48,47 +98,230 @@ bool registerLock(
     ANGULO_FECHADO
   );
 
+  pinMode(
+    sensorPin,
+    INPUT_PULLUP
+  );
+
   locks[id] = {
-    pin,
+    servoPin,
+    sensorPin,
     servo,
     false,
     0
   };
 
+  Serial.print(
+    "Porta registrada: "
+  );
+
+  Serial.print(id);
+
+  Serial.print(
+    " Servo="
+  );
+
+  Serial.print(
+    servoPin
+  );
+
+  Serial.print(
+    " Sensor="
+  );
+
+  Serial.println(
+    sensorPin
+  );
+
   return true;
+}
+
+void removeLock(
+  const String& id
+) {
+
+  auto it =
+    locks.find(id);
+
+  if (
+    it ==
+    locks.end()
+  ) {
+
+    return;
+  }
+
+  uint8_t servoPin =
+    it->second.servoPin;
+
+  int slot = -1;
+
+  for (
+    int i = 0;
+    i < TOTAL_PORTAS;
+    i++
+  ) {
+
+    if (
+      SERVO_PINS[i] ==
+      servoPin
+    ) {
+
+      slot = i;
+      break;
+    }
+  }
+
+  if (
+    it->second.servo
+  ) {
+
+    it->second.servo->detach();
+
+    delete it->second.servo;
+  }
+
+  locks.erase(it);
+
+  if (
+    slot >= 0
+  ) {
+
+    freeSlots.push_back(
+      slot
+    );
+  }
+
+  Serial.print(
+    "Porta removida: "
+  );
+
+  Serial.println(id);
 }
 
 void openLock(
   const String& id
 ) {
 
+  auto it =
+    locks.find(id);
+
+  if (
+    it == locks.end()
+  ) {
+    return;
+  }
+
   auto& lock =
-    locks[id];
+    it->second;
 
   lock.servo->write(
     ANGULO_ABERTO
   );
 
-  lock.abertaFisicamente =
-    true;
-
   lock.instanteAbertura =
     millis();
+
+  Serial.print(
+    "Abrindo servo: "
+  );
+
+  Serial.println(id);
 }
 
 void closeLock(
   const String& id
 ) {
 
+  auto it =
+    locks.find(id);
+
+  if (
+    it == locks.end()
+  ) {
+    return;
+  }
+
   auto& lock =
-    locks[id];
+    it->second;
 
   lock.servo->write(
     ANGULO_FECHADO
   );
 
-  lock.abertaFisicamente =
-    false;
+  Serial.print(
+    "Fechando servo: "
+  );
+
+  Serial.println(id);
+}
+
+bool readPhysicalState(
+  const String& id
+) {
+
+  auto it =
+    locks.find(id);
+
+  if (
+    it ==
+    locks.end()
+  ) {
+
+    return false;
+  }
+
+  return
+    digitalRead(
+      it->second.sensorPin
+    ) == LOW;
+}
+
+void monitorSensors() {
+
+  for (
+    auto& item : locks
+  ) {
+
+    String id =
+      item.first;
+
+    auto& lock =
+      item.second;
+
+    bool estadoAtual =
+      digitalRead(
+        lock.sensorPin
+      ) == LOW;
+
+    if (
+      estadoAtual !=
+      lock.abertaFisicamente
+    ) {
+
+      lock.abertaFisicamente =
+        estadoAtual;
+
+      updatePhysicalState(
+        id,
+        estadoAtual
+      );
+
+      Serial.print(
+        "Sensor alterado: "
+      );
+
+      Serial.print(id);
+
+      Serial.print(
+        " -> "
+      );
+
+      Serial.println(
+        estadoAtual
+      );
+    }
+  }
 }
 
 void processLocks() {
@@ -110,14 +343,22 @@ void processLocks() {
       TEMPO_ABERTO_MS
     ) {
 
-    closeLock(
-    item.first
-    );
+      Serial.print(
+        "Fechando automaticamente: "
+      );
 
-    updateDoorState(
-    item.first,
-    false
-    );
+      Serial.println(
+        item.first
+      );
+
+      closeLock(
+        item.first
+      );
+
+      updateDoorState(
+        item.first,
+        false
+      );
+    }
   }
-}
 }
