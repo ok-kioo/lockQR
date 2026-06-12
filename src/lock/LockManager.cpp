@@ -4,7 +4,7 @@
 std::map<String, LockState> locks;
 
 const int ANGULO_FECHADO = 90;
-const int ANGULO_ABERTO = 180;
+const int ANGULO_ABERTO = 135;
 
 const unsigned long TEMPO_ABERTO_MS =
   10000;
