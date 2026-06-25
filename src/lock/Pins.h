@@ -9,7 +9,6 @@ const uint8_t PINOS_DISPONIVEIS[] = {
   22,
   23,
   25,
-  26,
   27,
   32,
   33

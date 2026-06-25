@@ -9,9 +9,10 @@ const int ANGULO_ABERTO = 135;
 const unsigned long TEMPO_ABERTO_MS =
   10000;
 
+const uint8_t LED_PIN = 26;
+
 const uint8_t SERVO_PINS[] = {
   18,
-  19,
   21,
   22,
   23
@@ -19,13 +20,12 @@ const uint8_t SERVO_PINS[] = {
 
 const uint8_t SENSOR_PINS[] = {
   25,
-  26,
   27,
   32,
   33
 };
 
-const int TOTAL_PORTAS = 5;
+const int TOTAL_PORTAS = 4;
 
 std::vector<int> freeSlots;
 
@@ -34,6 +34,9 @@ static void initializePins() {
   if (!freeSlots.empty()) {
     return;
   }
+
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
 
   for (
     int i = 0;
@@ -215,9 +218,35 @@ void openLock(
   auto& lock =
     it->second;
 
+  digitalWrite(
+    LED_PIN,
+    LOW
+  );
+
   lock.servo->write(
     ANGULO_ABERTO
   );
+
+  delay(1500);
+
+  bool abriu =
+    digitalRead(
+      lock.sensorPin
+    ) == LOW;
+
+  if (!abriu) {
+
+    digitalWrite(
+      LED_PIN,
+      HIGH
+    );
+
+    Serial.print(
+      "ERRO AO ABRIR: "
+    );
+
+    Serial.println(id);
+  }
 
   lock.instanteAbertura =
     millis();
